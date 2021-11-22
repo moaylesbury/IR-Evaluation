@@ -434,14 +434,79 @@ class PreProcessor:
             tokens = self.tokeniser(doc)
             # stop and stem
             doc = self.stopping_and_stemming(tokens)
-
+        print(self.mutual_information([OT,NT,QR]))
         print("Complete.")
 
     def chi_squared(self):
         pass
 
-    def mutual_information(self):
-        pass
+    def mutual_information(self, docs):
+        # N - total number of documents
+        # N_t_c - documents that do/don't contain e_t, e_c depending on the t, c values
+        # N_t - documents that contain/don't contain e_t
+        # N_c - documents that contain/don't contain e_c
+
+        # list to hold the mutual information
+        m_i = []
+
+        N = len(docs)
+        c_no = 0 # class number
+        for t in range(0,2):
+            for c in range(0,2):
+                s1 = self.N_t_c(t, c, docs, c_no) / N
+                s2 = s1 / self.N_t(t, docs) * self.N_c(c, N)
+                m_i.append(s1 * math.log(s2, 2))
+        return m_i
+
+    def N_t_c(self, t, c, docs, c_no):
+        # t: boolean value
+        # c: boolean value
+        # there are four cases, N_0_0, N_0_1, N_1_0, N_1_1
+        N_t_c = 0
+
+        if c == 0:
+            for doc_no, doc in enumerate(docs):
+                if doc_no == c_no:
+                    if t == 0:
+                        if t not in doc:
+                            N_t_c += 1
+                    if t == 1:
+                        if t in doc:
+                            N_t_c += 1
+        if c == 1:
+            for doc_no, doc in enumerate(docs):
+                if doc_no == c_no:
+                    if t == 0:
+                        if t not in doc:
+                            N_t_c += 1
+                    if t == 1:
+                        if t in doc:
+                            N_t_c += 1
+        return N_t_c
+
+
+    def N_t(self, t, docs):
+        # documents containing t
+        # t: boolean value
+        N_t = 0
+        if t == 0:
+            for doc in docs:
+                if t not in doc:
+                    N_t += 1
+        if t == 1:
+            for doc in docs:
+                if t in doc:
+                    N_t += 1
+        return N_t
+
+
+    def N_c(self, c, N):
+        # documents not in class c
+        # c: boolean value
+        if c == 0:
+            return N - 1
+        if c == 1:
+            return 1
 
 
 if __name__ == "__main__":
