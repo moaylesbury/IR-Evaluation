@@ -2,6 +2,19 @@ import math
 import re
 from stemming.porter2 import stem
 
+def format_number(n):
+    print("formatting!: ", n)
+    if len(str(n)) == 1:
+        return str(n)
+    if len(str(n)) < 4:
+        print("here")
+    if len(str(n)) > 4:
+        to_round = int(str(n)[2:5])
+        print("round ", to_round)
+        rounded = round(to_round, 2)
+        print("rounded ", rounded)
+        return to_round
+
 class System:
     def __init__(self, num):
         self.num = num
@@ -179,7 +192,7 @@ class EVAL:
         return self.read_in("qrels.csv")
 
 
-    def get_top_n(self, metric, n):
+    def get_top_n(self, n):
         # gets top n results
 
         # uses precision or recall metric
@@ -207,7 +220,6 @@ class EVAL:
                 if sys_num == 1 and qry_num == 10:
                     for a in sys_res.get_system(1).get_query(10):
                         a.pretty_print()
-                    print("Yes")
                 # print("~~~~~~~~~~~~~ system:1 , query:", qry_num, " ~~~~~~~~~~~~~")
                 a = self.precision(sys_res.get_system(sys_num).get_query(qry_num)[:n], qrels)
                 b = self.recall(sys_res.get_system(sys_num).get_query(qry_num)[:n], qrels)
@@ -216,9 +228,15 @@ class EVAL:
                 e = self.nDCG(sys_res.get_system(sys_num).get_query(qry_num)[:n], qrels)
                 f = self.nDCG(sys_res.get_system(sys_num).get_query(qry_num)[:n], qrels)
 
-                for i in [sys_num, qry_num, a, b, c, d, e, f]:
-                    output += str(i)[:4]
-                    output += " "
+                for count, i in enumerate([sys_num, qry_num, a, b, c, d, e, f]):
+                    # calculating output string for line
+                    # for the sys_num and qry_num (count < 1) just append the number cast to a string
+                    formatted = format_number(i)
+                    print("formatted: ", formatted)
+                    # output += formatted
+                    # output += " "
+                exit()
+                print(output)
                 file.write(output + '\n')
         file.close()
 
@@ -427,18 +445,47 @@ class PreProcessor:
         print("preprocessing...")
         # get documents
         OT, NT, QR = self.read_in("train_and_dev.tsv")
+        # pre-processed documents
+        docs = []
 
         # for each document
         for doc in [OT, NT, QR]:
             # tokenise
             tokens = self.tokeniser(doc)
             # stop and stem
-            doc = self.stopping_and_stemming(tokens)
-        print(self.mutual_information([OT,NT,QR]))
+            docs.append(self.stopping_and_stemming(tokens))
+        print(self.mutual_information(docs))
         print("Complete.")
 
     def chi_squared(self):
-        pass
+        # x^2(D,t,c) = (A * B) / (C * D * E * F)
+
+        chi_sqr = []
+        print("Beginning chi-squared calculations...")
+        for c_no, doc in enumerate(docs):
+            used_terms = []
+            for term in doc:
+                if term not in used_terms:
+                    used_terms.append(term)
+
+                    N00 = self.N_t_c(term, 0, 0, docs, c_no)
+                    N01 = self.N_t_c(term, 0, 1, docs, c_no)
+                    N10 = self.N_t_c(term, 1, 0, docs, c_no)
+                    N11 = self.N_t_c(term, 1, 1, docs, c_no)
+
+                    A = N00 + N01 + N10 + N11
+                    B = ((N11 * N00) - (N10 * N01)) ** 2
+
+                    C = N11 + N01
+                    D = N11 + N10
+                    E = N10 + N00
+                    F = N01 + N00
+
+                    chi_sqr.append((A * B) / (C * D * E * F))
+                else:
+                    pass
+
+        return chi_sqr
 
     def mutual_information(self, docs):
         # N - total number of documents
@@ -448,17 +495,49 @@ class PreProcessor:
 
         # list to hold the mutual information
         m_i = []
-
         N = len(docs)
-        c_no = 0 # class number
-        for t in range(0,2):
-            for c in range(0,2):
-                s1 = self.N_t_c(t, c, docs, c_no) / N
-                s2 = s1 / self.N_t(t, docs) * self.N_c(c, N)
-                m_i.append(s1 * math.log(s2, 2))
+        print("Beginning mutual information calculations...")
+        for c_no, doc in enumerate(docs):
+            used_terms = []
+            for term in doc:
+
+                formula = ""
+                I = 0
+                # print(term)
+                if term not in used_terms:
+                    used_terms.append(term)
+                    for t in range(0, 2):
+                        for c in range(0, 2):
+                            # print("==============")
+                            # print("term: ", term)
+                            # print("N_", t,"_", c, ": ", self.N_t_c(term, t, c, docs, c_no))
+                            # print("N_", t, ": ", self.N_t(term, t, docs))
+                            # print("N_", c, ": ", self.N_c(c, N))
+                            # print("==============")
+                            formula += "N" + str(t) + str(c) + "/N log " + "(N N" + str(t) + str(c) + \
+                                       ") /(N" + str(t) + "N" + str(c) + ")        +        "
+
+                            Ntc = self.N_t_c(term, t, c, docs, c_no)
+                            Nt = self.N_t(term, t, docs)
+                            Nc = self.N_c(c, N)
+                            # print(Ntc, Nt, Nc)
+                            # need to check if the log will give an error
+                            # if an exception is thrown, skip this
+                            try:
+                                s1 = Ntc / N
+                                # print(s1)
+                                s2 = (N*Ntc) / (Nt * Nc)
+                                # print(s2)
+                                I += s1 * math.log(s2, 2)
+                                print(I)
+                            except:
+                                pass
+
+            exit()
+            m_i.append(I)
         return m_i
 
-    def N_t_c(self, t, c, docs, c_no):
+    def N_t_c(self, term, t, c, docs, c_no):
         # t: boolean value
         # c: boolean value
         # there are four cases, N_0_0, N_0_1, N_1_0, N_1_1
@@ -466,36 +545,36 @@ class PreProcessor:
 
         if c == 0:
             for doc_no, doc in enumerate(docs):
-                if doc_no == c_no:
+                if doc_no != c_no:
                     if t == 0:
-                        if t not in doc:
+                        if term not in doc:
                             N_t_c += 1
                     if t == 1:
-                        if t in doc:
+                        if term in doc:
                             N_t_c += 1
         if c == 1:
             for doc_no, doc in enumerate(docs):
                 if doc_no == c_no:
                     if t == 0:
-                        if t not in doc:
+                        if term not in doc:
                             N_t_c += 1
                     if t == 1:
-                        if t in doc:
+                        if term in doc:
                             N_t_c += 1
         return N_t_c
 
 
-    def N_t(self, t, docs):
-        # documents containing t
+    def N_t(self, term, t, docs):
+        # documents containing term
         # t: boolean value
         N_t = 0
         if t == 0:
             for doc in docs:
-                if t not in doc:
+                if term not in doc:
                     N_t += 1
         if t == 1:
             for doc in docs:
-                if t in doc:
+                if term in doc:
                     N_t += 1
         return N_t
 
@@ -516,11 +595,10 @@ if __name__ == "__main__":
     # ev.read_in_qrels("qrels.csv")
 
     # to calculate p@10:
-    # ev.get_top_n('p', 10)
+    ev.get_top_n(10)
 
     pp = PreProcessor()
-    pp.pre_process()
-
+    # pp.pre_process()
 
 
     # TODO: fix AP so that it's p@k not just p
