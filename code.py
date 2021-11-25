@@ -1,19 +1,45 @@
 import math
 import re
+import numpy as np
 from stemming.porter2 import stem
 
+from scipy.sparse import dok_matrix
+
+from sklearn.decomposition import LatentDirichletAllocation
+from sklearn.datasets import make_multilabel_classification
+
+from sklearn.svm import SVC
+from sklearn.pipeline import make_pipeline
+
+from gensim.test.utils import common_texts, common_corpus
+from gensim.corpora.dictionary import Dictionary
+from gensim.models import LdaModel
+
+
 def format_number(n):
-    print("formatting!: ", n)
-    if len(str(n)) == 1:
+    # formats output numbers
+    # all integers are cast to a string
+    # all floats have two decimal places and are cast to a string
+
+    # if sys/qrn num or already two decimal float
+    # note query number goes to 10, so need to check for length 1 and 2
+    if len(str(n)) == 1 or len(str(n)) == 2 or len(str(n)) == 4:
         return str(n)
+    # if less than two decimal places add zeroes
     if len(str(n)) < 4:
-        print("here")
+        diff = 4-len(str(n))
+        return str(n) + '0'*diff
+    # if more than two decimal places then round
     if len(str(n)) > 4:
         to_round = int(str(n)[2:5])
-        print("round ", to_round)
-        rounded = round(to_round, 2)
-        print("rounded ", rounded)
-        return to_round
+        final_digit = int(str(to_round)[-1])
+        # if the last digit is less than five use floor function
+        if final_digit < 5:
+            return str(math.floor(to_round/10)/100)
+        # ese use ceil function
+        else:
+            return str(math.ceil(to_round/10)/100)
+
 
 class System:
     def __init__(self, num):
@@ -233,9 +259,8 @@ class EVAL:
                     # for the sys_num and qry_num (count < 1) just append the number cast to a string
                     formatted = format_number(i)
                     print("formatted: ", formatted)
-                    # output += formatted
-                    # output += " "
-                exit()
+                    output += formatted
+                    output += " "
                 print(output)
                 file.write(output + '\n')
         file.close()
@@ -386,6 +411,58 @@ class EVAL:
         nDCG = DCG / iDCG
         return nDCG
 
+
+def N_t_c(term, t, c, docs, c_no):
+    # t: boolean value
+    # c: boolean value
+    # there are four cases, N_0_0, N_0_1, N_1_0, N_1_1
+    N_t_c = 0
+
+    if c == 0:
+        for doc_no, doc in enumerate(docs):
+            if doc_no != c_no:
+                if t == 0:
+                    if term not in doc:
+                        N_t_c += 1
+                if t == 1:
+                    if term in doc:
+                        N_t_c += 1
+    if c == 1:
+        for doc_no, doc in enumerate(docs):
+            if doc_no == c_no:
+                if t == 0:
+                    if term not in doc:
+                        N_t_c += 1
+                if t == 1:
+                    if term in doc:
+                        N_t_c += 1
+    return N_t_c
+
+
+def N_t(term, t, docs):
+    # documents containing term
+    # t: boolean value
+    N_t = 0
+    if t == 0:
+        for doc in docs:
+            if term not in doc:
+                N_t += 1
+    if t == 1:
+        for doc in docs:
+            if term in doc:
+                N_t += 1
+    return N_t
+
+
+def N_c(c, N):
+    # documents not in class c
+    # c: boolean value
+    if c == 0:
+        return N - 1
+    if c == 1:
+        return 1
+
+
 class PreProcessor:
     # this is an altered version of my code.py module from CW1
 
@@ -431,6 +508,28 @@ class PreProcessor:
         # print(tokens)
         return tokens
 
+    def sentence_tokeniser_and_stemmer(self, docs):
+        # tokensises, stems, and stops
+        sentences = []
+        # read stop words from file
+        stop_words = self.read_in("englishST.txt").split()
+        for doc in docs:
+            # iterate over lines in the document
+            # get list of lists
+            for line in doc:
+                # split the line using regex, and iterate over the list
+                # note the first item is discarded as we do not want "OT", "NT", or "Quran"
+                sentence = []
+                # for word in re.split(r'[^\w+\']+', line)[1:]:
+                for word in re.split(r'[^\w+\']+', line):
+                    if word != "":
+                        # append case folded word to sentence
+                        sentence.append(word.lower())
+                # use porter stemmer to stem tokens if not present in stop words list
+                sentence = [stem(t) for t in sentence if t not in stop_words]
+                if sentence: sentences.append(sentence)
+        return sentences
+
     def stopping_and_stemming(self, tokens):
         # performs stopping
         # makes a list of stop words and removes any such words in token stream
@@ -454,7 +553,12 @@ class PreProcessor:
             tokens = self.tokeniser(doc)
             # stop and stem
             docs.append(self.stopping_and_stemming(tokens))
-        print(self.mutual_information(docs))
+        # print(self.mutual_information(docs))
+
+        # get sentences from read in for LDA
+
+        # corpus = self.sentence_tokeniser_and_stemmer([OT, NT, QR])
+        self.LDA(docs)
         print("Complete.")
 
     def chi_squared(self):
@@ -537,55 +641,116 @@ class PreProcessor:
             m_i.append(I)
         return m_i
 
-    def N_t_c(self, term, t, c, docs, c_no):
-        # t: boolean value
-        # c: boolean value
-        # there are four cases, N_0_0, N_0_1, N_1_0, N_1_1
-        N_t_c = 0
+    def LDA(self, docs):
+        # do I need OT, etc at the start of the line
 
-        if c == 0:
-            for doc_no, doc in enumerate(docs):
-                if doc_no != c_no:
-                    if t == 0:
-                        if term not in doc:
-                            N_t_c += 1
-                    if t == 1:
-                        if term in doc:
-                            N_t_c += 1
-        if c == 1:
-            for doc_no, doc in enumerate(docs):
-                if doc_no == c_no:
-                    if t == 0:
-                        if term not in doc:
-                            N_t_c += 1
-                    if t == 1:
-                        if term in doc:
-                            N_t_c += 1
-        return N_t_c
+        # Create a corpus from a list of texts
+        common_dictionary = Dictionary(docs)
 
+        common_corpus = [common_dictionary.doc2bow(text) for text in docs]
 
-    def N_t(self, term, t, docs):
-        # documents containing term
-        # t: boolean value
-        N_t = 0
-        if t == 0:
-            for doc in docs:
-                if term not in doc:
-                    N_t += 1
-        if t == 1:
-            for doc in docs:
-                if term in doc:
-                    N_t += 1
-        return N_t
+        # Train the model on the corpus.
 
+        lda = LdaModel(common_corpus, num_topics=20, id2word=common_dictionary)
+        # for i in range(lda.num_topics):
+        #     for tt in lda.get_document_topics(common_corpus[i]):
+        #         print(tt)
+        #     lda.show_topic(i)
+        #     print(lda.print_topic(i, 10))
+        for a in lda.get_document_topics(common_corpus):
+            print(a)
 
-    def N_c(self, c, N):
-        # documents not in class c
-        # c: boolean value
-        if c == 0:
-            return N - 1
-        if c == 1:
+        print("hello")
+
+        pass
+
+class TextClassifier:
+    def __init__(self, pp):
+        self.pre_processor = pp
+    def extract_BOW(self):
+        # extracts bag of words from corpus
+        print("Hello World The Second")
+
+        # read in the data
+        OT, NT, QR = self.pre_processor.read_in("train_and_dev.tsv")
+
+        unique_tokens = []
+
+        docs = []
+        for doc in [OT, NT, QR]:
+            tokens = self.pre_processor.tokeniser(doc)
+            docs.append(tokens)
+
+            for t in tokens:
+                if t not in unique_tokens:
+                    unique_tokens.append(t)
+
+        n_terms = len(unique_tokens)
+
+        # instansiate our sparse matrix
+        X = dok_matrix((len(docs), n_terms))
+        # fill matrix
+        print(n_terms)
+        # (i, j) is number of times word j appears in document i
+        for i in range(len(docs)):
+            for j in range(len(unique_tokens)):
+                cnt = self.word_count(docs[i], unique_tokens[j])
+                if cnt != 0:
+                    X[i, j] = cnt
+        # print(matrix)
+
+        # categories; ot, nt, qr
+        # need to make a mapping
+
+        # getting input verses
+        sentences = self.pre_processor.sentence_tokeniser_and_stemmer([OT, NT, QR])
+        a,y = self.form_data_and_labels(sentences)
+
+        # now training the baseline SVC
+        # TODO: remember to split data
+
+        # baseline = SVC(C=1000)
+        # baseline?
+        print(X.shape)
+        print(y.shape)
+        # baseline.fit(X, y)
+        # print("the fit was successful!")
+        print("Goodbye Cruel World")
+
+    def form_data_and_labels(self, sentences):
+        X = []
+        y = []
+        for sentence in sentences:
+            corpus = sentence[0]
+            y.append(self.get_corpus_id(corpus))
+        return np.array(X), np.array(y)
+
+    def get_corpus_id(self, corpus):
+        if corpus == "ot":
+            return 0
+        if corpus == "nt":
             return 1
+        if corpus == "quran":
+            return 2
+
+    def word_count(self, doc, word):
+        # returns occurnces of word in doc
+        # count = 0
+        # to speed up search, first ensure that word is present
+        # trying to optimise this
+        if word in doc:
+            return doc.count(word)
+        else:
+            return 0
+
+        # if word in doc:
+        #     for w in doc:
+        #         if w == word:
+        #             count += 1
+        #     return count
+        # else:
+        #     return count
+
 
 
 if __name__ == "__main__":
@@ -595,11 +760,13 @@ if __name__ == "__main__":
     # ev.read_in_qrels("qrels.csv")
 
     # to calculate p@10:
-    ev.get_top_n(10)
+    # ev.get_top_n(10)
 
     pp = PreProcessor()
     # pp.pre_process()
 
+    tc = TextClassifier(pp)
+    tc.extract_BOW()
 
     # TODO: fix AP so that it's p@k not just p
     # TODO: check r-precision
