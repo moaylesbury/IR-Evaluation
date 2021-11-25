@@ -674,6 +674,8 @@ class TextClassifier:
         # read in the data
         OT, NT, QR = self.pre_processor.read_in("train_and_dev.tsv")
 
+
+        # get unique tokens
         unique_tokens = []
 
         docs = []
@@ -687,13 +689,24 @@ class TextClassifier:
 
         n_terms = len(unique_tokens)
 
+        # getting input verses
+        sentences = self.pre_processor.sentence_tokeniser_and_stemmer([OT, NT, QR])
+        print(len(sentences))
+
+        docs, y = self.form_data_and_labels(sentences)
+
+        n_sentences = len(docs)
         # instansiate our sparse matrix
-        X = dok_matrix((len(docs), n_terms))
+        X = dok_matrix((n_sentences, n_terms))
         # fill matrix
-        print(n_terms)
+        print("docs: ", n_sentences)
+        print("terms: ", n_terms)
+
+
+
         # (i, j) is number of times word j appears in document i
-        for i in range(len(docs)):
-            for j in range(len(unique_tokens)):
+        for i in range(n_sentences):
+            for j in range(n_terms):
                 cnt = self.word_count(docs[i], unique_tokens[j])
                 if cnt != 0:
                     X[i, j] = cnt
@@ -702,18 +715,17 @@ class TextClassifier:
         # categories; ot, nt, qr
         # need to make a mapping
 
-        # getting input verses
-        sentences = self.pre_processor.sentence_tokeniser_and_stemmer([OT, NT, QR])
-        a,y = self.form_data_and_labels(sentences)
+
+
 
         # now training the baseline SVC
         # TODO: remember to split data
 
-        # baseline = SVC(C=1000)
+        baseline = SVC(C=1000)
         # baseline?
         print(X.shape)
         print(y.shape)
-        # baseline.fit(X, y)
+        baseline.fit(X, y)
         # print("the fit was successful!")
         print("Goodbye Cruel World")
 
@@ -721,8 +733,14 @@ class TextClassifier:
         X = []
         y = []
         for sentence in sentences:
+            # the first word in the sentence defines the corpus
+            # get the relevant id
             corpus = sentence[0]
             y.append(self.get_corpus_id(corpus))
+            # the remainder of the sentence is to be added to X
+            X.append(sentence[1:])
+        # ignore warning for making a ragged nested sequence TODO for now
+        np.warnings.filterwarnings('ignore', category=np.VisibleDeprecationWarning)
         return np.array(X), np.array(y)
 
     def get_corpus_id(self, corpus):
