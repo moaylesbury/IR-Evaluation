@@ -2,6 +2,7 @@ import math
 import re
 import numpy as np
 from stemming.porter2 import stem
+import random
 
 from scipy.sparse import dok_matrix
 
@@ -9,6 +10,7 @@ from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.datasets import make_multilabel_classification
 
 from sklearn.svm import SVC
+from sklearn.metrics import accuracy_score
 from sklearn.pipeline import make_pipeline
 
 from gensim.test.utils import common_texts, common_corpus
@@ -119,7 +121,6 @@ class Result:
 
 
 class Qrels:
-    # list of Qrels; there qill be 6 as there are 6 queries
     def __init__(self):
         self.qrels = []
 
@@ -218,9 +219,9 @@ class EVAL:
         return self.read_in("qrels.csv")
 
 
-    def get_top_n(self, n):
+    def evaluate(self):
         # gets top n results
-
+        n = 10
         # uses precision or recall metric
 
         # fetch the system results and qrels
@@ -243,25 +244,28 @@ class EVAL:
             # queries are numbered 1-10
             for qry_num in range(1, 11):
                 output = ""
+                print("-----")
                 if sys_num == 1 and qry_num == 10:
                     for a in sys_res.get_system(1).get_query(10):
                         a.pretty_print()
+                print("-----")
                 # print("~~~~~~~~~~~~~ system:1 , query:", qry_num, " ~~~~~~~~~~~~~")
-                a = self.precision(sys_res.get_system(sys_num).get_query(qry_num)[:n], qrels)
-                b = self.recall(sys_res.get_system(sys_num).get_query(qry_num)[:n], qrels)
-                c = self.ap(sys_res.get_system(sys_num).get_query(qry_num)[:n], qrels)
-                d = self.r_precison(sys_res.get_system(sys_num).get_query(qry_num)[:n], qrels)
-                e = self.nDCG(sys_res.get_system(sys_num).get_query(qry_num)[:n], qrels)
-                f = self.nDCG(sys_res.get_system(sys_num).get_query(qry_num)[:n], qrels)
+                a = self.precision(sys_res.get_system(sys_num).get_query(qry_num)[:10], qrels)
+                b = self.recall(sys_res.get_system(sys_num).get_query(qry_num)[:50], qrels)
+                c = self.ap(sys_res.get_system(sys_num).get_query(qry_num), qrels)
+                d = self.r_precison(sys_res.get_system(sys_num).get_query(qry_num), qrels)
+                e = self.nDCG(sys_res.get_system(sys_num).get_query(qry_num)[:10], qrels)
+                f = self.nDCG(sys_res.get_system(sys_num).get_query(qry_num)[:20], qrels)
 
+                # do formatting
                 for count, i in enumerate([sys_num, qry_num, a, b, c, d, e, f]):
                     # calculating output string for line
                     # for the sys_num and qry_num (count < 1) just append the number cast to a string
                     formatted = format_number(i)
-                    print("formatted: ", formatted)
+                    # print("formatted: ", formatted)
                     output += formatted
                     output += " "
-                print(output)
+                # print(output)
                 file.write(output + '\n')
         file.close()
 
@@ -276,7 +280,6 @@ class EVAL:
         for result in sys:
             retrieved.append(result.doc_num)
         return retrieved
-
 
     def precision(self, sys, qrels):
         # precision at cutoff 10
@@ -295,10 +298,9 @@ class EVAL:
         # true positives are in retrieved and relevant
         TP = len([r for r in retrieved if r in relevant])
         # false positives are in retrived but not relevant
-        FP = len([r for r in retrieved if r not in relevant])
+        # FP = len([r for r in retrieved if r not in relevant])
 
-
-        return TP/(TP + FP)
+        return TP/len(retrieved)
 
     def recall(self, sys, qrels):
         # precision at cutoff 10
@@ -326,7 +328,7 @@ class EVAL:
         # true positives are in retrieved and relevant
         TP = len([r for r in retrieved if r in relevant])
         # false positives are in retrived but not relevant
-        FP = len([r for r in retrieved if r not in relevant])
+        # FP = len([r for r in retrieved if r not in relevant])
 
         return TP / len(relevant)
 
@@ -350,23 +352,25 @@ class EVAL:
 
         # summation loop
         sum = 0
-        for k in range(0, n):
-            # TODO: think I need to change this to precision at k rather than just precision
-            sum += self.precision(sys, qrels) * self.relevant(retrieved[k], relevant)
+        for k in range(1, n):
+            sum += self.precision(sys[:k], qrels) * self.relevant(retrieved[k], relevant)
         return sum / r
 
     def r_precison(self, sys, qrels):
-        # TODO: check this
         # get the query number
+        # r-precision is defined as r/R
+
+        # where R is the total number of relevant documents
+        # and r is the number of relevant documents out of the R fetched
         qry_num = sys[0].qry_num
         relevant = self.get_relevant_for_query(qrels, qry_num)
-        r = len(relevant)
+        R = len(relevant)
 
-        retrieved = self.get_retrieved_for_query(sys)
+        retrieved = self.get_retrieved_for_query(sys[:R])
 
-        relevant_and_retrieved = len([r for r in retrieved if r in relevant])
+        r = len([r for r in retrieved if r in relevant])
 
-        return relevant_and_retrieved/r
+        return r/R
 
     def relevant(self, doc, rels):
         # returns binary value; 1 if document is relevant to query, 0 otherwise
@@ -669,11 +673,9 @@ class TextClassifier:
         self.pre_processor = pp
     def extract_BOW(self):
         # extracts bag of words from corpus
-        print("Hello World The Second")
 
         # read in the data
         OT, NT, QR = self.pre_processor.read_in("train_and_dev.tsv")
-
 
         # get unique tokens
         unique_tokens = []
@@ -689,47 +691,93 @@ class TextClassifier:
 
         n_terms = len(unique_tokens)
 
+        # add ID codes to tokens
+        token_ids = self.get_token_ids(unique_tokens)
+
         # getting input verses
         sentences = self.pre_processor.sentence_tokeniser_and_stemmer([OT, NT, QR])
         print(len(sentences))
 
-        docs, y = self.form_data_and_labels(sentences)
 
-        n_sentences = len(docs)
-        # instansiate our sparse matrix
-        X = dok_matrix((n_sentences, n_terms))
+        # shuffle and split data into train and test
+        train, test =self.shuffle_and_split(sentences, "9:1")
+
+        # get X and y for each set
+        pre_Xtrn, ytrn = self.form_data_and_labels(train, token_ids)
+        pre_Xtst, ytst = self.form_data_and_labels(test, token_ids)
+
+        # get lens for matrices
+        pre_Xtrn_len = len(pre_Xtrn)
+        pre_Xtst_len = len(pre_Xtst)
+
+        # instansiate our sparse matrices
+        Xtrn = dok_matrix((pre_Xtrn_len, n_terms))
+        Xtst = dok_matrix((pre_Xtst_len, n_terms))
+
         # fill matrix
-        print("docs: ", n_sentences)
-        print("terms: ", n_terms)
-
-
-
+        # TODO: can make this a loop
         # (i, j) is number of times word j appears in document i
-        for i in range(n_sentences):
+        for i in range(pre_Xtrn_len):
             for j in range(n_terms):
-                cnt = self.word_count(docs[i], unique_tokens[j])
+                cnt = self.word_count(pre_Xtrn[i], unique_tokens[j])
                 if cnt != 0:
-                    X[i, j] = cnt
-        # print(matrix)
+                    Xtrn[i, j] = cnt
 
-        # categories; ot, nt, qr
-        # need to make a mapping
+        for i in range(pre_Xtst_len):
+            for j in range(n_terms):
+                cnt = self.word_count(pre_Xtst[i], unique_tokens[j])
+                if cnt != 0:
+                    Xtst[i, j] = cnt
+        print(Xtrn)
 
-
-
-
-        # now training the baseline SVC
-        # TODO: remember to split data
-
+        # now training the baseline SVC on train data
         baseline = SVC(C=1000)
-        # baseline?
-        print(X.shape)
-        print(y.shape)
-        baseline.fit(X, y)
+        baseline.fit(Xtrn, ytrn)
+
+        # make prediction on test data ("unseen data")
+        ypred = baseline.predict(Xtst)
+
+
+        ## test models
+        bigger = SVC(C=1000)
+        bigger.fit(Xtrn, ytrn)
+        big_pred = bigger.predict(Xtst)
+
+
+        ##############
+
+        print("SCORE FOR PREDICTION!")
+        # get baseline score as a fraction 0-1, 1 being the best, as normalise is set to True
+        # multiply by 100 for percentage score
+        print("baseline score")
+        score = accuracy_score(y_true=ytst, y_pred=ypred, normalize=True) * 100
+        print(score)
+
+        print("bigger score")
+        score = accuracy_score(y_true=ytst, y_pred=big_pred, normalize=True) * 100
+        print(score)
+
         # print("the fit was successful!")
         print("Goodbye Cruel World")
 
-    def form_data_and_labels(self, sentences):
+    def shuffle_and_split(self, lst, ratio):
+        # shuffles list of docs and splits into test and train
+        # ratio of form n:1-n, meaning train=data[:n] test=data[n+1:] where n + (1-n) = 10
+
+        # get multipliers from ratio
+        trn_mult = int(ratio[0])
+        tst_mult = int(ratio[2])
+
+        # shuffle data
+        random.shuffle(lst)
+
+        # split
+        # TODO: check that the split indices are correct
+        return lst[:trn_mult], lst[tst_mult+1:]
+
+
+
+    def form_data_and_labels(self, sentences, ids):
         X = []
         y = []
         for sentence in sentences:
@@ -742,6 +790,14 @@ class TextClassifier:
         # ignore warning for making a ragged nested sequence TODO for now
         np.warnings.filterwarnings('ignore', category=np.VisibleDeprecationWarning)
         return np.array(X), np.array(y)
+
+    def get_token_ids(self, unique_tokens):
+        # enumerate tokens and use that as ID
+        token_ids = {}
+        for id, tok in enumerate(unique_tokens):
+            token_ids[tok] = id
+        return token_ids
+
 
     def get_corpus_id(self, corpus):
         if corpus == "ot":
@@ -773,18 +829,20 @@ class TextClassifier:
 
 if __name__ == "__main__":
     print("Hello World")
-    ev = EVAL()
-    # ev.read_in_sys_res("system_results.csv")
-    # ev.read_in_qrels("qrels.csv")
 
-    # to calculate p@10:
-    # ev.get_top_n(10)
 
-    pp = PreProcessor()
+    # IR EVALUATION =-=-=-=-=-=-=-=-=-=-=-=-=-#
+    ev = EVAL()                               #
+    ev.read_in_sys_res("system_results.csv")  #
+    ev.read_in_qrels("qrels.csv")             #
+    ev.evaluate()                             #
+    # =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-#
+
+    # pp = PreProcessor()
     # pp.pre_process()
 
-    tc = TextClassifier(pp)
-    tc.extract_BOW()
+    # tc = TextClassifier(pp)
+    # tc.extract_BOW()
 
     # TODO: fix AP so that it's p@k not just p
     # TODO: check r-precision
