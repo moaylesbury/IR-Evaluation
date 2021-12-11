@@ -12,7 +12,7 @@ from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.datasets import make_multilabel_classification
 
 from sklearn.svm import SVC
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, precision_recall_fscore_support
 from sklearn.pipeline import make_pipeline
 
 from gensim.test.utils import common_texts, common_corpus
@@ -609,9 +609,9 @@ class PreProcessor:
         # for each document
         for doc in [OT, NT, QR]:
             # tokenise
-            tokens = self.tokeniser(doc)
+            # tokens = self.tokeniser(doc)
             # stop and stem
-            docs.append(self.stopping_and_stemming(tokens))
+            # docs.append(self.stopping_and_stemming(tokens))
             doc_verses.append(self.sentence_tokeniser_and_stemmer(doc))
             # exit()
             # docs.append(self.sentence_tokeniser_and_stemmer(doc))
@@ -624,7 +624,7 @@ class PreProcessor:
         # print(self.mutual_information(docs))
         docs = doc_verses[0] + doc_verses[1] + doc_verses[2]
         # print(len(docs), "         +        ")
-        print("len of each doc: ", len(OT), " ", len(NT), " ", len(QR))
+        # print("len of each doc: ", len(OT), " ", len(NT), " ", len(QR))
         # for doc in doc_verses:
         #     x,y = self.chi_mi(doc)
         #     print("CHI")
@@ -795,21 +795,27 @@ class PreProcessor:
 
         common_dictionary = Dictionary(docs)
 
-        common_corpus = [common_dictionary.doc2bow(text) for text in docs]
+        common_corpus = [common_dictionary.doc2bow(verse) for verse in docs]
         print(len(common_corpus), "    <- corpus length")
         # print(common_corpus)
 
         # Train the model on the corpus.
-
+        print("model trained")
         lda = LdaModel(common_corpus, num_topics=20, id2word=common_dictionary)
-        print("~~~~~~~~~~~~~~~~~~~~~~~")
-        # for i in range(lda.num_topics-1):
-        #     print(lda.get_document_topics(common_corpus[i]))
-        # a = [doc for doc in common_corpus]
-        # print(len(a))
-        # for aa in a:
-        #     print(len(aa))
-        print("document topic probabilities for the three corpora...")
+
+        # apply lda to each doc corpus
+        # ot_lda = lda[[common_dictionary.doc2bow(verse) for verse in doc_verses[0]]]
+        # nt_lda = lda[[common_dictionary.doc2bow(verse) for verse in doc_verses[1]]]
+        # qr_lda = lda[[common_dictionary.doc2bow(verse) for verse in doc_verses[2]]]
+        #
+        #
+        #
+        #
+        #
+        #
+        #
+        # print("~~~~~~~~~~~~~~~~~~~~~~~")
+        # print("document topic probabilities for the three corpora...")
         # print("~~nt~~")
         # nt = [lda.get_document_topics(common_corpus[0])]
         # print(nt)
@@ -898,7 +904,7 @@ class TextClassifier:
     def __init__(self, pp):
         self.pre_processor = pp
 
-    def preprocess_for_svm(self, doc):
+    def preprocess_for_svm(self, doc, stop_and_stem):
         # tokensises, does NOT stem or stop
         sentences = []
         # iterate over lines in the document
@@ -909,6 +915,8 @@ class TextClassifier:
                 if word != "" and word != "'":
                     # append case folded word to sentence
                     sentence.append(word.lower())
+            if stop_and_stem:
+                sentence = self.pre_processor.stopping_and_stemming(sentence)
             if sentence: sentences.append(sentence)
         return sentences
 
@@ -1042,8 +1050,8 @@ class TextClassifier:
         unique_tokens = []
 
         # iterate over documents
-        for doc in [OT, NT, QR]:
-            verses = self.preprocess_for_svm(doc)
+        for doc in [OT[:5], NT[:5], QR[:5]]:
+            verses = self.preprocess_for_svm(doc, stop_and_stem=True)
 
             # add unique terms
             for verse in verses:
@@ -1064,6 +1072,11 @@ class TextClassifier:
 
         # unique tokens
         dictionary = Dictionary(docs)
+        # corpus of all verses
+        common_corpus = [dictionary.doc2bow(verse) for verse in docs]
+        # train tfidf model
+        tfidf = TfidfModel(common_corpus)
+
         # for verse in docs:
         #     print(verse)
         # corpus = [dictionary.doc2bow(verse) for verse in docs]
@@ -1079,62 +1092,36 @@ class TextClassifier:
         pre_Xtst, ytst = self.form_data_and_labels(test)
 
         # get BOW representation and counts in order to form spare matrices
+        Xtrn_corp = [dictionary.doc2bow(verse) for verse in pre_Xtrn]
+        Xtst_corp = [dictionary.doc2bow(verse) for verse in pre_Xtst]
 
-        Xtrn_BOW = [dictionary.doc2bow(verse) for verse in pre_Xtrn]
-        Xtst_BOW = [dictionary.doc2bow(verse) for verse in pre_Xtst]
+        # get tf-idf weighting
+        trn_tfidf = [tfidf[verse] for verse in Xtrn_corp]
+        tst_tfidf = [tfidf[verse] for verse in Xtst_corp]
 
         # instansiate our sparse matrices
         Xtrn = dok_matrix((len(pre_Xtrn), len(dictionary.token2id.items())))
         Xtst = dok_matrix((len(pre_Xtst), len(dictionary.token2id.items())))
 
+
+
+
+
+
+
         # (i,j) is the count of the number of times the word j appears in document i
         # for i, loop over documents for Xtrn
         print("beginning train...")
         # number documents linearly from 0 - len(docs), i is the identifier and doc is the document
-        for i, doc in enumerate(pre_Xtrn):
-            word_counts = dictionary.doc2bow(doc)
-            for id, count in word_counts:
+        for i, bow_doc in enumerate(trn_tfidf):
+            for id, count in bow_doc:
                 Xtrn[i, id] = count
         print("finished train...")
         print("beginning train...")
-        for i, doc in enumerate(pre_Xtst):
-            word_counts = dictionary.doc2bow(doc)
-            for id, count in word_counts:
+        for i, bow_doc in enumerate(tst_tfidf):
+            for id, count in bow_doc:
                 Xtst[i, id] = count
         print("finished test...")
-        #
-        #
-        # # instansiate our sparse matrices
-        # Xtrn_pre_corp = [common_dictionary.doc2bow(verse) for verse in pre_Xtrn]
-        # tfidf = TfidfModel(Xtrn_pre_corp)
-        # pre_Xtrn = tfidf[Xtrn_pre_corp]
-        #
-        # Xtst_pre_corp = [common_dictionary.doc2bow(verse) for verse in pre_Xtst]
-        # pre_Xtst = tfidf[Xtst_pre_corp]
-        #
-        # # get lens for matrices
-        # pre_Xtrn_len = len(pre_Xtrn)
-        # pre_Xtst_len = len(pre_Xtst)
-        # # n_terms = len(uni) make this unique token length
-        # print("pre-train length", pre_Xtrn_len)
-        #
-        # # instansiate our sparse matrices
-        # Xtrn = dok_matrix((pre_Xtrn_len, n_terms))
-        # Xtst = dok_matrix((pre_Xtst_len, n_terms))
-        #
-        # for x in pre_Xtrn:
-        #
-        #     for j in range(n_terms):
-        #         cnt = self.word_count(pre_Xtrn[i], unique_tokens[j])
-        #         if cnt != 0:
-        #             Xtrn[i, j] = cnt
-        # print("train has completed")
-        #
-        # for i in range(pre_Xtst_len):
-        #     for j in range(n_terms):
-        #         cnt = self.word_count(pre_Xtst[i], unique_tokens[j])
-        #         if cnt != 0:
-        #             Xtst[i, j] = cnt
 
         print("training")
         baseline = SVC(C=1000)
@@ -1147,87 +1134,54 @@ class TextClassifier:
         print("SCORE FOR PREDICTION!")
         score = accuracy_score(y_true=ytst, y_pred=ypred, normalize=True) * 100
         print(score)
+        # writing out to classification.csv
 
-        exit()
+        f = open("classification.csv", 'w')
+        f.write("system,split,p-quran,r-quran,f-quran,p-ot,r-ot,f-ot,p-nt,r-nt,f-nt,p-macro,r-macro,f-macro")
+
+        c = ','
+        for system in ["baseline", "improved"]:
+            for split in ["train", "dev", "test"]:
+                # print(pandas_confusion.ConfusionMatrix(y_true=ytst, y_pred=ypred))
+                # print("p-ot score: ", precision_score(ytst, ypred, pos_label=0))
+                # print("p-nt score: ", precision_score(ytst, ypred, pos_label=1))
+                print(precision_recall_fscore_support(y_true=ytst, y_pred=ypred))
+                exit()
+                p_ot, p_nt, p_qr = precision_score(ytst, ypred)
+                p_macro = sum([p_ot, p_nt, p_qr])
+                r_ot, r_nt, r_qr = recall_score(ytst, ypred)
+                r_macro = sum([r_ot, r_nt, r_qr])
+                f_ot, f_nt, f_qr = f1_score(ytst, ypred)
+                f_macro = sum([f_ot, f_nt, f_qr])
+
+                output = ""
+                for item in [system, split, p_qr, r_qr, f_qr, p_ot, r_ot, f_ot, p_nt, r_nt, f_nt, p_macro, r_macro, f_macro]:
+                    output += item + c
+                # remove final comma as it is not needed
+                output = output[:-1]
+
+                f.write(output)
+        f.close()
+
+
+
+
+
+
+
+
+
+        # exit()
 
 
 
 
         # tokenise
-        tokens = self.pre_processor.tokeniser(doc)
-        # stop and stem
-        docs.append(self.pre_processor.stopping_and_stemming(tokens))
-        doc_verses.append(self.pre_processor.sentence_tokeniser_and_stemmer(doc))
-
-        docs = doc_verses[0] + doc_verses[1] + doc_verses[2]
-        # =-=-=-=-=--=-=--=--==-=-==-=-=-=-=--=-=-==-=-=-==-==-
-
-        # Create a corpus from a list of texts
-        common_dictionary = Dictionary(docs)
-
-        common_corpus = [common_dictionary.doc2bow(text) for text in docs]
-        print(len(common_corpus), "    <- corpus length")
-
-        tfidf = TfidfModel(common_corpus)
-        corpus_tfidf = tfidf[common_corpus]
-
-        for x in corpus_tfidf[:10]:
-            print(x)
-        exit()
-
-        # shuffle and split data into train and test
-        train, test = self.shuffle_and_split(docs, "9:1")
-
-        # get X and y for each set
-        pre_Xtrn, ytrn = self.form_data_and_labels(train)
-        pre_Xtst, ytst = self.form_data_and_labels(test)
+        # tfidf = TfidfModel(common_corpus)
+        # corpus_tfidf = tfidf[common_corpus]
+        #
 
 
-
-        # instansiate our sparse matrices
-        Xtrn_pre_corp = [common_dictionary.doc2bow(verse) for verse in pre_Xtrn]
-        tfidf = TfidfModel(Xtrn_pre_corp)
-        pre_Xtrn = tfidf[Xtrn_pre_corp]
-
-        Xtst_pre_corp = [common_dictionary.doc2bow(verse) for verse in pre_Xtst]
-        pre_Xtst = tfidf[Xtst_pre_corp]
-
-        # get lens for matrices
-        pre_Xtrn_len = len(pre_Xtrn)
-        pre_Xtst_len = len(pre_Xtst)
-        # n_terms = len(uni) make this unique token length
-        print("pre-train length", pre_Xtrn_len)
-
-        # instansiate our sparse matrices
-        Xtrn = dok_matrix((pre_Xtrn_len, n_terms))
-        Xtst = dok_matrix((pre_Xtst_len, n_terms))
-
-        for x in pre_Xtrn:
-            for j in range(n_terms):
-                cnt = self.word_count(pre_Xtrn[i], unique_tokens[j])
-                if cnt != 0:
-                    Xtrn[i, j] = cnt
-        print("train has completed")
-
-        for i in range(pre_Xtst_len):
-            for j in range(n_terms):
-                cnt = self.word_count(pre_Xtst[i], unique_tokens[j])
-                if cnt != 0:
-                    Xtst[i, j] = cnt
-
-
-        baseline = SVC(C=1000)
-        baseline.fit(Xtrn, ytrn)
-        print("trained")
-
-        # make prediction on test data ("unseen data")
-        ypred = baseline.predict(Xtst)
-
-        print("SCORE FOR PREDICTION!")
-        score = accuracy_score(y_true=ytst, y_pred=ypred, normalize=True) * 100
-        print(score)
-
-        # print("the fit was successful!")
         b = time.perf_counter()
 
         print("\n\ntime: ", b-a, "\n\n")
