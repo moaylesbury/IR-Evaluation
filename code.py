@@ -21,14 +21,14 @@ from gensim.models import LdaModel
 from gensim.models import TfidfModel
 
 
-def tt_test(a,b):
-    print(t(a,b))
+def tt_test(a, b):
+    print(t(a, b))
 
 
 def format_number(n):
     # formats output numbers
     # all integers are cast to a string
-    # all floats have two decimal places and are cast to a string
+    # all floats have three decimal places and are cast to a string
 
     # if sys/qrn num or already two decimal float
     # note query number goes to 10, so need to check for length 1 and 2
@@ -40,25 +40,34 @@ def format_number(n):
         return str(n) + '0'*diff
     # if more than two decimal places then round
     if len(str(n)) > 4:
-        # print("A: ", n)
-
+        # get the last digits and cast to integer
         to_round = int(str(n)[2:6])
-        # print("B: ", to_round)
+        # get the final digit which will determine if rounding up or down
         final_digit = int(str(to_round)[-1])
+
         # if the last digit is less than five use floor function
         if final_digit < 5:
-            return str(math.floor(to_round/10)/1000)
-        # ese use ceil function
+            post_digit = str(math.floor(to_round/10)/1000)
+        # else use ceil function
         else:
-            return str(math.ceil(to_round/10)/1000)
+            post_digit = str(math.ceil(to_round/10)/1000)
+
+        # check if n is greater than 1, if so get the digits before the decimal point
+        if n > 1:
+            return str(n).split('.')[0] + post_digit[1:]
+        else:
+            return post_digit
 
 
 class System:
     def __init__(self, num):
+        # system number
         self.num = num
+        # associated queries
         self.queries = []
 
     def add_query_result(self, query_result):
+        # add a result to queries
         self.queries.append(query_result)
 
     def get_query(self, qry_num):
@@ -78,23 +87,28 @@ class QueryResult:
         self.doc_num  = doc_num
         self.doc_rank = doc_rank
         self.score    = score
+
     def pretty_print(self):
+        # pretty printer for testing and debugging
         print("system:", self.sys_num, " query:", self.qry_num, " doc:", self.doc_num, " doc rank:",
               self.doc_rank, " score: ", self.score)
 
 
 class SystemResults:
     def __init__(self):
+        # list of system results
         self.systems = []
 
     def add_systems(self, systems):
-        # systems is a list of System objects
+        # add systems
         [add_system(sys) for sys in systems]
 
     def add_system(self, sys):
+        # add system
         self.systems.append(sys)
 
     def get_system(self, num):
+        # return system with corresponding system number
         for sys in self.systems:
             if sys.num == num:
                 return sys
@@ -551,6 +565,8 @@ class PreProcessor:
         # print(len(OT), space, len(NT), space, len(QR))
         return OT, NT, QR
 
+
+
     def tokeniser(self, doc):
         tokens = []
         # iterate over lines in the document
@@ -900,9 +916,54 @@ class PreProcessor:
 
         pass
 
+def unpack_array(arr):
+    # unpacks numpy arrays to return first three items
+    # used for unpacking precision_recall_fscore_support returned np arrays
+    return [arr.item(idx) for idx in range(3)]
+
 class TextClassifier:
     def __init__(self, pp):
         self.pre_processor = pp
+
+    def pre_process_dev(self, dictionary, common_corpus):
+        OT, NT, QR = self.pre_processor.read_in("test.tsv")
+
+        # OT, NT, QR = self.preprocess_for_svm(d, stop_and_stem=True)
+
+        docs = []
+        # lines = open("")
+
+
+
+
+
+        # iterate over documents
+        for doc in [OT, NT, QR]:
+            docs += self.preprocess_for_svm(doc, stop_and_stem=True)
+
+        # train tfidf model
+        tfidf = TfidfModel(common_corpus)
+        # get X and y for each set
+        pre_X, y = self.form_data_and_labels(docs)
+
+        # get BOW representation and counts in order to form spare matrices
+        X_corp = [dictionary.doc2bow(verse) for verse in pre_X]
+
+        # get tf-idf weighting
+        X_tfidf = [tfidf[verse] for verse in X_corp]
+
+        # instansiate our sparse matrices
+        X = dok_matrix((len(pre_X), len(dictionary.token2id.items())))
+
+        # (i,j) is the count of the number of times the word j appears in document i
+        # for i, loop over documents for Xtrn
+        print("forming dev...")
+        # number documents linearly from 0 - len(docs), i is the identifier and doc is the document
+        for i, bow_doc in enumerate(X_tfidf):
+            for id, count in bow_doc:
+                X[i, id] = count
+        print("finished dev...")
+        return [X, y]
 
     def preprocess_for_svm(self, doc, stop_and_stem):
         # tokensises, does NOT stem or stop
@@ -921,47 +982,11 @@ class TextClassifier:
         return sentences
 
 
-    def extract_BOW(self):
-        # extracts bag of words from corpus
-        a = time.perf_counter()
-
-
-        # read in the data
-        OT, NT, QR = self.pre_processor.read_in("train_and_dev.tsv")
-
-
-
-        # get unique tokens
-        unique_tokens = []
-
-        docs = []
-        for doc in [OT, NT, QR]:
-            tokens = self.pre_processor.tokeniser(doc)
-            docs.append(tokens)
-
-            for t in tokens:
-                if t not in unique_tokens:
-                    unique_tokens.append(t)
-
+    def get_baseline_model(self, docs, doc_verses, dictionary, common_corpus, unique_tokens):
         n_terms = len(unique_tokens)
 
-        # add ID codes to tokens
-        # token_ids = self.get_token_ids(unique_tokens)
-
-        # getting input verses
-        sentences = []
-
-        # for each document
-        for doc in [OT, NT, QR]:
-            sentences.append(self.pre_processor.sentence_tokeniser_and_stemmer(doc))
-        # COMBINE SO THERES NO SUB LISTS TODO : THIS CAN PROBABLY BE DONE IN THE UFNCTION AS BOTH USERS DO THIS
-        sentences = sentences[0] + sentences[1] + sentences[2]
-
-
-
-
         # shuffle and split data into train and test
-        train, test = self.shuffle_and_split(sentences, "9:1")
+        train, test = self.shuffle_and_split(docs, "9:1")
         # train, test = self.shuffle_and_split(sentences, "7:3")
         print("split train length", len(train))
 
@@ -978,7 +1003,7 @@ class TextClassifier:
         Xtrn = dok_matrix((pre_Xtrn_len, n_terms))
         Xtst = dok_matrix((pre_Xtst_len, n_terms))
 
-
+        print("forming train set...")
         # fill matrix
         # TODO: can make this a loop
         # (i, j) is number of times word j appears in document i
@@ -987,53 +1012,70 @@ class TextClassifier:
                 cnt = self.word_count(pre_Xtrn[i], unique_tokens[j])
                 if cnt != 0:
                     Xtrn[i, j] = cnt
-        print("train has completed")
+        print("finished train...")
 
+        print("forming test set...")
         for i in range(pre_Xtst_len):
             for j in range(n_terms):
                 cnt = self.word_count(pre_Xtst[i], unique_tokens[j])
                 if cnt != 0:
                     Xtst[i, j] = cnt
-        print("test has completed")
+        print("finished test...")
 
-
-
+        print("training baseline model...")
         # now training the baseline SVC on train data
         baseline = SVC(C=1000)
         baseline.fit(Xtrn, ytrn)
-        print("train 1")
+        print("baseline model trained...")
 
-        # make prediction on test data ("unseen data")
-        ypred = baseline.predict(Xtst)
+        return baseline, [Xtrn, ytrn], [Xtst, ytst]
 
+    def get_improved_model(self, docs, doc_verses, dictionary, common_corpus):
+        # train tfidf model
+        tfidf = TfidfModel(common_corpus)
 
-        ## test models
-        bigger = SVC(C=3000, kernel='linear')
-        bigger.fit(Xtrn, ytrn)
-        print("train 2")
-        big_pred = bigger.predict(Xtst)
+        # shuffle and split data into train and test
+        train, test = self.shuffle_and_split(docs, "9:1")
 
+        # get X and y for each set
+        pre_Xtrn, ytrn = self.form_data_and_labels(train)
+        # pre_Xtst, ytst = self.form_data_and_labels(test)
+        pre_Xtst, ytst = self.form_data_and_labels(test)
 
-        ##############
+        # get BOW representation and counts in order to form spare matrices
+        Xtrn_corp = [dictionary.doc2bow(verse) for verse in pre_Xtrn]
+        Xtst_corp = [dictionary.doc2bow(verse) for verse in pre_Xtst]
 
-        print("SCORE FOR PREDICTION!")
-        # get baseline score as a fraction 0-1, 1 being the best, as normalise is set to True
-        # multiply by 100 for percentage score
-        print("baseline score")
-        blscore = accuracy_score(y_true=ytst, y_pred=ypred, normalize=True) * 100
-        print(blscore)
+        # get tf-idf weighting
+        trn_tfidf = [tfidf[verse] for verse in Xtrn_corp]
+        tst_tfidf = [tfidf[verse] for verse in Xtst_corp]
 
-        print("bigger score")
-        bgscore = accuracy_score(y_true=ytst, y_pred=big_pred, normalize=True) * 100
-        print(bgscore)
+        # instansiate our sparse matrices
+        Xtrn = dok_matrix((len(pre_Xtrn), len(dictionary.token2id.items())))
+        Xtst = dok_matrix((len(pre_Xtst), len(dictionary.token2id.items())))
 
-        # print("the fit was successful!")
-        b = time.perf_counter()
+        # (i,j) is the count of the number of times the word j appears in document i
+        # for i, loop over documents for Xtrn
+        print("forming train set...")
+        # number documents linearly from 0 - len(docs), i is the identifier and doc is the document
+        for i, bow_doc in enumerate(trn_tfidf):
+            for id, count in bow_doc:
+                Xtrn[i, id] = count
+        print("finished train...")
 
-        print("\n\ntime: ", b-a, "\n\n")
-        print("Goodbye Cruel World")
+        print("forming test set...")
+        for i, bow_doc in enumerate(tst_tfidf):
+            for id, count in bow_doc:
+                Xtst[i, id] = count
+        print("finished test...")
 
-    def improved_svm(self):
+        print("training improved model...")
+        model = SVC(C=600)
+        model.fit(Xtrn, ytrn)
+        print("improved model trained...")
+        return model, [Xtrn, ytrn], [Xtst, ytst]
+
+    def classify(self):
         # extracts bag of words from corpus
         a = time.perf_counter()
 
@@ -1050,7 +1092,7 @@ class TextClassifier:
         unique_tokens = []
 
         # iterate over documents
-        for doc in [OT[:5], NT[:5], QR[:5]]:
+        for doc in [OT, NT, QR]:
             verses = self.preprocess_for_svm(doc, stop_and_stem=True)
 
             # add unique terms
@@ -1065,121 +1107,57 @@ class TextClassifier:
             # add to verse list
             docs += verses
 
-        # length checks
-        # print(len(docs))
-        # print(len(doc_verses))
-        # print(len(unique_tokens))
-
         # unique tokens
         dictionary = Dictionary(docs)
         # corpus of all verses
         common_corpus = [dictionary.doc2bow(verse) for verse in docs]
-        # train tfidf model
-        tfidf = TfidfModel(common_corpus)
 
-        # for verse in docs:
-        #     print(verse)
-        # corpus = [dictionary.doc2bow(verse) for verse in docs]
-        # print(common_corpus)
-        # print(corpus)
-        # test to make sure unique tokens are identified
-
-        # shuffle and split data into train and test
-        train, test = self.shuffle_and_split(docs, "9:1")
-
-        # get X and y for each set
-        pre_Xtrn, ytrn = self.form_data_and_labels(train)
-        pre_Xtst, ytst = self.form_data_and_labels(test)
-
-        # get BOW representation and counts in order to form spare matrices
-        Xtrn_corp = [dictionary.doc2bow(verse) for verse in pre_Xtrn]
-        Xtst_corp = [dictionary.doc2bow(verse) for verse in pre_Xtst]
-
-        # get tf-idf weighting
-        trn_tfidf = [tfidf[verse] for verse in Xtrn_corp]
-        tst_tfidf = [tfidf[verse] for verse in Xtst_corp]
-
-        # instansiate our sparse matrices
-        Xtrn = dok_matrix((len(pre_Xtrn), len(dictionary.token2id.items())))
-        Xtst = dok_matrix((len(pre_Xtst), len(dictionary.token2id.items())))
-
-
-
-
-
-
-
-        # (i,j) is the count of the number of times the word j appears in document i
-        # for i, loop over documents for Xtrn
-        print("beginning train...")
-        # number documents linearly from 0 - len(docs), i is the identifier and doc is the document
-        for i, bow_doc in enumerate(trn_tfidf):
-            for id, count in bow_doc:
-                Xtrn[i, id] = count
-        print("finished train...")
-        print("beginning train...")
-        for i, bow_doc in enumerate(tst_tfidf):
-            for id, count in bow_doc:
-                Xtst[i, id] = count
-        print("finished test...")
-
-        print("training")
-        baseline = SVC(C=1000)
-        baseline.fit(Xtrn, ytrn)
-        print("trained...")
-
-        # make prediction on test data ("unseen data")
-        ypred = baseline.predict(Xtst)
-
-        print("SCORE FOR PREDICTION!")
-        score = accuracy_score(y_true=ytst, y_pred=ypred, normalize=True) * 100
-        print(score)
-        # writing out to classification.csv
+        # read in the dev set
+        dev = self.pre_process_dev(dictionary, common_corpus)
+        # print(dev)
+        # exit()
+        baseline_model, b_train, b_test = self.get_baseline_model(docs, doc_verses, dictionary, common_corpus, unique_tokens)
+        improved_model, i_train, i_test = self.get_improved_model(docs, doc_verses, dictionary, common_corpus)
 
         f = open("classification.csv", 'w')
-        f.write("system,split,p-quran,r-quran,f-quran,p-ot,r-ot,f-ot,p-nt,r-nt,f-nt,p-macro,r-macro,f-macro")
+        acc_results = open("accuracy_results", 'w')
+
+        f.write("system,split,p-quran,r-quran,f-quran,p-ot,r-ot,f-ot,p-nt,r-nt,f-nt,p-macro,r-macro,f-macro\n")
 
         c = ','
-        for system in ["baseline", "improved"]:
-            for split in ["train", "dev", "test"]:
-                # print(pandas_confusion.ConfusionMatrix(y_true=ytst, y_pred=ypred))
-                # print("p-ot score: ", precision_score(ytst, ypred, pos_label=0))
-                # print("p-nt score: ", precision_score(ytst, ypred, pos_label=1))
-                print(precision_recall_fscore_support(y_true=ytst, y_pred=ypred))
-                exit()
-                p_ot, p_nt, p_qr = precision_score(ytst, ypred)
-                p_macro = sum([p_ot, p_nt, p_qr])
-                r_ot, r_nt, r_qr = recall_score(ytst, ypred)
-                r_macro = sum([r_ot, r_nt, r_qr])
-                f_ot, f_nt, f_qr = f1_score(ytst, ypred)
-                f_macro = sum([f_ot, f_nt, f_qr])
+        for system, model in zip(["baseline", "improved"], [baseline_model, improved_model]):
+            for split, data_set in zip(["train", "dev", "test"], [i_train, dev, i_test]):
+                ypred = model.predict(data_set[0])
+                print(split)
+                print(data_set[1])
+                print(ypred)
+                precision, recall, fscore, _ = precision_recall_fscore_support(y_true=data_set[1], y_pred=ypred)
+
+                acc_results.write(str(accuracy_score(y_true=data_set[1], y_pred=ypred)) + '\n')
+
+                p_ot, p_nt, p_qr = unpack_array(precision)
+                p_macro = np.sum(precision)
+                r_ot, r_nt, r_qr = unpack_array(recall)
+                r_macro = np.sum(recall)
+                f_ot, f_nt, f_qr = unpack_array(fscore)
+                f_macro = np.sum(fscore)
 
                 output = ""
                 for item in [system, split, p_qr, r_qr, f_qr, p_ot, r_ot, f_ot, p_nt, r_nt, f_nt, p_macro, r_macro, f_macro]:
-                    output += item + c
-                # remove final comma as it is not needed
-                output = output[:-1]
+                    print(item)
+                    if isinstance(item, str):
+                        output += item + c
+                    # format not string values for output
+                    else:
+                        output += format_number(item) + c
+
+                # replace end of line comma with newline
+                output = output[:-1] + "\n"
+                print("--------------------")
 
                 f.write(output)
         f.close()
-
-
-
-
-
-
-
-
-
-        # exit()
-
-
-
-
-        # tokenise
-        # tfidf = TfidfModel(common_corpus)
-        # corpus_tfidf = tfidf[common_corpus]
-        #
+        acc_results.close()
 
 
         b = time.perf_counter()
@@ -1269,8 +1247,6 @@ if __name__ == "__main__":
 
     # IR EVALUATION =-=-=-=-=-=-=-=-=-=-=-=-=-#
     # ev = EVAL()                               #
-    # ev.read_in_sys_res("system_results.csv")  #
-    # ev.read_in_qrels("qrels.csv")             #
     # ev.evaluate()                             #
     # =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-#
 
@@ -1279,10 +1255,8 @@ if __name__ == "__main__":
     # pp.pre_process()
     # =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-#
 
-    # currently broken, uncomment to run
     # TEXT CLASSIFICATION =-=-=-=-=-=-=-=-=-=-#
     tc = TextClassifier(pp)                   #
-    # tc.extract_BOW()                          #
-    tc.improved_svm()                          #
-    # =-=-=-=-=-=-2=-=-=-=-=-=-=-=-=-=-=-=-=-=-#
+    tc.classify()                             #
+    # =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-#
 
